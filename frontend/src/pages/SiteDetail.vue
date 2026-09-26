@@ -14,6 +14,7 @@ import { useSiteStore } from '@/stores/siteStore'
 import { useProfileStore } from '@/stores/profileStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useRanking } from '@/hooks/useRanking'
+import { resolveSiteScheme, SCHEME_SOURCE_LABEL, SCHEME_SOURCE_TAG } from '@/utils/scheme'
 import { FACTOR_META, NORMALIZE_LABELS } from '@/types/score'
 import { ASPECT_TYPES, SURFACE_TYPES, ACCESS_MODES } from '@/types/campsite'
 import type { AspectType, AccessMode, SurfaceType } from '@/types/campsite'
@@ -37,9 +38,7 @@ const site = computed(() => siteStore.byId(siteId.value))
 const { scoreOf } = useRanking({
   sites: () => siteStore.list,
   factorOf: (id: number) => siteStore.latestFactor(id),
-  weights: () => profileStore.activeWeights,
-  normalize: () => profileStore.activeProfile?.normalize ?? 'minmax',
-  thresholds: () => profileStore.activeProfile?.thresholds ?? { gradeA: 78, gradeB: 58 },
+  schemeOf: (s) => resolveSiteScheme(s, profileStore.activeSchemeContext()),
   vetoedIds: () => uiStore.vetoedSiteIds
 })
 
@@ -174,7 +173,16 @@ const editForm = reactive({
   tentCapacity: 1,
   flatness: 80,
   access: '车行' as AccessMode,
+  /** null = 跟随当前启用方案；否则为营位自己指定的方案 id */
+  defaultProfileId: null as number | null,
   note: ''
+})
+
+/** 营位指定的方案已被删除（悬空引用）：详情页提示回退、编辑表单里要求改派 */
+const danglingProfileId = computed<number | null>(() => {
+  const id = site.value?.defaultProfileId ?? null
+  if (id == null) return null
+  return profileStore.byId(id) ? null : id
 })
 
 function startEdit(): void {
@@ -189,6 +197,7 @@ function startEdit(): void {
   editForm.tentCapacity = s.tentCapacity
   editForm.flatness = s.flatness
   editForm.access = s.access
+  editForm.defaultProfileId = s.defaultProfileId
   editForm.note = s.note
   editing.value = true
 }
@@ -205,6 +214,7 @@ async function saveEdit(): Promise<void> {
     tentCapacity: Number(editForm.tentCapacity),
     flatness: Number(editForm.flatness),
     access: editForm.access,
+    defaultProfileId: editForm.defaultProfileId,
     note: editForm.note.trim()
   })
   editing.value = false
@@ -259,6 +269,16 @@ watch(
       :description="vetoList.map((v) => `${v.type}：${v.description}`).join(' ｜ ')"
     />
 
+    <el-alert
+      v-if="danglingProfileId != null"
+      type="warning"
+      show-icon
+      :closable="false"
+      class="mt10"
+      :title="`指定方案 #${danglingProfileId} 已删除，当前回退跟随「${profileStore.activeProfile?.name ?? '当前方案'}」`"
+      description="在下方「编辑基础信息」里重新指定方案或改为跟随当前启用方案，即可消除回退标记。"
+    />
+
     <MapPanel
       :sites="siteStore.list"
       :selected-id="siteId"
@@ -272,7 +292,20 @@ watch(
       <div class="stat-card">
         <div class="stat-card__label">综合得分</div>
         <div class="stat-card__value">{{ scoreRow?.total ?? '—' }}</div>
-        <div class="stat-card__extra">方案 {{ profileStore.activeProfile?.name ?? '—' }}</div>
+        <div class="stat-card__extra">
+          <template v-if="scoreRow">
+            方案「{{ scoreRow.scheme.profileName }}」·
+            <el-tag
+              size="small"
+              effect="plain"
+              :type="SCHEME_SOURCE_TAG[scoreRow.scheme.source]"
+              class="ml4"
+            >
+              {{ SCHEME_SOURCE_LABEL[scoreRow.scheme.source] }}
+            </el-tag>
+          </template>
+          <template v-else>方案 —</template>
+        </div>
       </div>
       <div class="stat-card">
         <div class="stat-card__label">推荐等级</div>
@@ -363,6 +396,24 @@ watch(
             </el-radio-group>
           </el-form-item>
         </div>
+        <el-form-item label="评分方案">
+          <el-select id="edit-profile" v-model="editForm.defaultProfileId" style="width: 100%">
+            <el-option :value="null" label="跟随当前启用方案" />
+            <el-option
+              v-for="p in profileStore.list"
+              :key="p.id"
+              :value="p.id"
+              :label="`${p.name}（${p.season}）`"
+            />
+            <el-option
+              v-if="danglingProfileId != null"
+              :value="danglingProfileId"
+              disabled
+              :label="`已删除的方案 #${danglingProfileId}（正在回退跟随当前方案）`"
+            />
+          </el-select>
+          <span class="weight-note">营位优先使用自己指定的方案；改为「跟随当前启用方案」后，评分页的临时比较才会作用到该营位。</span>
+        </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="editForm.note" type="textarea" :rows="2" />
         </el-form-item>
@@ -377,9 +428,10 @@ watch(
       <div class="panel__head">
         <h2>因子打分表</h2>
         <span class="weight-note">
-          归一方式：{{ profileStore.activeProfile ? NORMALIZE_LABELS[profileStore.activeProfile.normalize] : '—' }}
-          · 等级阈值 A ≥ {{ profileStore.activeProfile?.thresholds.gradeA ?? 78 }} / B ≥
-          {{ profileStore.activeProfile?.thresholds.gradeB ?? 58 }}
+          方案：{{ scoreRow?.scheme.profileName ?? '—' }} ·
+          归一方式：{{ scoreRow ? NORMALIZE_LABELS[scoreRow.scheme.normalize] : '—' }}
+          · 等级阈值 A ≥ {{ scoreRow?.scheme.thresholds.gradeA ?? 78 }} / B ≥
+          {{ scoreRow?.scheme.thresholds.gradeB ?? 58 }}
         </span>
       </div>
       <div class="factor-grid">
@@ -646,5 +698,11 @@ watch(
 }
 .review-form {
   margin-bottom: 12px;
+}
+.ml4 {
+  margin-left: 4px;
+}
+.mt10 {
+  margin-top: 10px;
 }
 </style>

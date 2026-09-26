@@ -14,6 +14,7 @@ import { useProfileStore } from '@/stores/profileStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useRanking } from '@/hooks/useRanking'
 import type { Grade } from '@/utils/score'
+import { resolveSiteScheme, SCHEME_SOURCE_LABEL } from '@/utils/scheme'
 import { useAmapLoader } from '@/hooks/useAmapLoader'
 import { SURFACE_TYPES } from '@/types/campsite'
 import { formatLat, formatLng, distanceMeters, formatDistance } from '@/utils/geo'
@@ -43,9 +44,7 @@ const visibleSites = computed(() =>
 const { ranked, scoreOf } = useRanking({
   sites: () => siteStore.list,
   factorOf: (id: number) => siteStore.latestFactor(id),
-  weights: () => profileStore.activeWeights,
-  normalize: () => profileStore.activeProfile?.normalize ?? 'minmax',
-  thresholds: () => profileStore.activeProfile?.thresholds ?? { gradeA: 78, gradeB: 58 },
+  schemeOf: (site) => resolveSiteScheme(site, profileStore.activeSchemeContext()),
   vetoedIds: () => uiStore.vetoedSiteIds
 })
 
@@ -239,6 +238,14 @@ const gradeStats = computed(() => {
         <div class="detail-item">
           <span class="detail-item__label">平整度</span>
           <span>{{ selectedSite.flatness }} 分</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-item__label">评分方案</span>
+          <span>
+            {{ selectedRow?.scheme.profileName ?? '—' }}（{{ selectedRow
+              ? SCHEME_SOURCE_LABEL[selectedRow.scheme.source]
+              : '—' }}）
+          </span>
         </div>
         <div class="detail-item">
           <span class="detail-item__label">最近营位</span>

@@ -4,6 +4,8 @@ import { defineStore } from 'pinia'
 import { db, toPlain } from '@/utils/db'
 import type { FactorWeights, ScoreProfile } from '@/types/score'
 import { DEFAULT_WEIGHTS } from '@/types/score'
+import type { SchemeContext } from '@/utils/scheme'
+import { DEFAULT_THRESHOLDS } from '@/utils/scheme'
 import { nowIso } from '@/utils/format'
 
 export const useProfileStore = defineStore('profile', () => {
@@ -89,6 +91,23 @@ export const useProfileStore = defineStore('profile', () => {
     return list.value.find((p) => p.id === id) ?? null
   }
 
+  /**
+   * 名次表 / 地图 / 详情页共用的方案解析上下文：当前方案 = 启用方案。
+   * 营位 defaultProfileId 命中现存方案时用指定方案，否则（未指定或指定失效）跟随此当前方案。
+   */
+  function activeSchemeContext(): SchemeContext {
+    const p = activeProfile.value
+    return {
+      profiles: list.value,
+      current: {
+        weights: activeWeights.value,
+        normalize: p?.normalize ?? 'minmax',
+        thresholds: p ? { ...p.thresholds } : { ...DEFAULT_THRESHOLDS },
+        name: p?.name ?? '默认方案'
+      }
+    }
+  }
+
   const total = computed(() => list.value.length)
 
   return {
@@ -104,6 +123,7 @@ export const useProfileStore = defineStore('profile', () => {
     duplicateProfile,
     removeProfile,
     activate,
-    byId
+    byId,
+    activeSchemeContext
   }
 })

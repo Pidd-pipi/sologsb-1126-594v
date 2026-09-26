@@ -5,6 +5,8 @@
  *   v1 建 sites / factors 两张表
  *   v2 新增 profiles 表，并为 factors 补 siteId 索引
  *   v3 新增 vetos 表，并为存量营位回填默认权重方案
+ *   v4 defaultProfileId 语义改为「营位自己指定的方案；空 = 跟随当前启用方案」，
+ *      清空 v3 回填的启用方案引用（指向其他方案的视为人工指定，保留）
  */
 import Dexie, { type Table } from 'dexie'
 import type { Campsite } from '@/types/campsite'
@@ -15,7 +17,7 @@ import type { RiskVeto } from '@/types/veto'
 
 export const DB_NAME = 'gbcampsite-db'
 /** 当前数据结构版本号 */
-export const DB_VERSION = 3
+export const DB_VERSION = 4
 
 export class GbCampsiteDatabase extends Dexie {
   sites!: Table<Campsite, number>
@@ -74,6 +76,21 @@ export class GbCampsiteDatabase extends Dexie {
             if (typeof s.tentCapacity !== 'number') s.tentCapacity = 1
           })
       })
+
+    // v4：表结构不变；defaultProfileId 改为「营位自己指定的方案，空 = 跟随当前启用方案」。
+    // v3 曾把启用方案 id 回填给全部营位，与人工指定无法区分，这里把指向当前启用方案的引用
+    // 清空为跟随；指向其他方案的引用视为人工指定，予以保留。
+    this.version(DB_VERSION).upgrade(async (tx) => {
+      const profiles = (await tx.table('profiles').toArray()) as ScoreProfile[]
+      const active = profiles.find((p) => p.active)
+      if (typeof active?.id !== 'number') return
+      await tx
+        .table('sites')
+        .toCollection()
+        .modify((s: Partial<Campsite>) => {
+          if (s.defaultProfileId === active.id) s.defaultProfileId = null
+        })
+    })
   }
 }
 
@@ -136,8 +153,9 @@ function seedProfiles(): ScoreProfile[] {
 }
 
 function seedSites(): Campsite[] {
+  // 默认不指定方案：跟随当前启用方案；示例中两处林地营位指定「雨季防风防山洪」方案。
   const base = {
-    defaultProfileId: 1,
+    defaultProfileId: null,
     createdAt: SEED_TS,
     updatedAt: SEED_TS
   }
@@ -174,7 +192,8 @@ function seedSites(): Campsite[] {
       tentCapacity: 4,
       flatness: 74,
       access: '步行',
-      note: '马尾松林下缓坡，夏季阴凉，但落枝需定期清理。'
+      note: '马尾松林下缓坡，夏季阴凉，但落枝需定期清理。',
+      defaultProfileId: 2
     },
     {
       ...base,

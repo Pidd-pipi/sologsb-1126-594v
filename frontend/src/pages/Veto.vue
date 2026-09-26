@@ -11,6 +11,7 @@ import { useSiteStore } from '@/stores/siteStore'
 import { useProfileStore } from '@/stores/profileStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useRanking } from '@/hooks/useRanking'
+import { resolveSiteScheme } from '@/utils/scheme'
 import { VETO_TYPES, VETO_HINTS } from '@/types/veto'
 import type { VetoType } from '@/types/veto'
 import { formatDate, todayIso } from '@/utils/format'
@@ -23,9 +24,7 @@ const uiStore = useUiStore()
 const { scoreOf } = useRanking({
   sites: () => siteStore.list,
   factorOf: (id: number) => siteStore.latestFactor(id),
-  weights: () => profileStore.activeWeights,
-  normalize: () => profileStore.activeProfile?.normalize ?? 'minmax',
-  thresholds: () => profileStore.activeProfile?.thresholds ?? { gradeA: 78, gradeB: 58 },
+  schemeOf: (site) => resolveSiteScheme(site, profileStore.activeSchemeContext()),
   vetoedIds: () => uiStore.vetoedSiteIds
 })
 

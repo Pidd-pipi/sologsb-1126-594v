@@ -12,6 +12,8 @@ import { useUiStore } from '@/stores/uiStore'
 import { useRanking } from '@/hooks/useRanking'
 import { FACTOR_META } from '@/types/score'
 import { SURFACE_TYPES, ACCESS_MODES } from '@/types/campsite'
+import { resolveSiteScheme, SCHEME_SOURCE_LABEL, SCHEME_SOURCE_TAG } from '@/utils/scheme'
+import type { SchemeSource } from '@/utils/scheme'
 import GradeBadge from '@/components/common/GradeBadge.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { formatScore } from '@/utils/format'
@@ -39,9 +41,7 @@ const inputSites = computed(() =>
 const { ranked } = useRanking({
   sites: () => inputSites.value,
   factorOf: (siteId: number) => siteStore.latestFactor(siteId),
-  weights: () => profileStore.activeWeights,
-  normalize: () => profileStore.activeProfile?.normalize ?? 'minmax',
-  thresholds: () => profileStore.activeProfile?.thresholds ?? { gradeA: 78, gradeB: 58 },
+  schemeOf: (site) => resolveSiteScheme(site, profileStore.activeSchemeContext()),
   vetoedIds: () => uiStore.vetoedSiteIds
 })
 
@@ -53,6 +53,14 @@ function normalizedOf(
   key: string
 ): number | string {
   return row.rows.find((r) => r.key === key)?.normalized ?? '—'
+}
+
+/** 表格插槽 row 类型为 any，经这两个带类型的函数收窄后再索引来源字典 */
+function schemeSourceLabel(source: SchemeSource): string {
+  return SCHEME_SOURCE_LABEL[source]
+}
+function schemeSourceTag(source: SchemeSource): 'success' | 'info' | 'warning' {
+  return SCHEME_SOURCE_TAG[source]
 }
 
 /** 命中否决项的营位整行标红 */
@@ -68,6 +76,16 @@ const stats = computed(() => {
     vetoed: rows.filter((r) => r.vetoed).length,
     top: rows[0]?.total ?? 0,
     topName: rows[0] ? `${rows[0].site.code} ${rows[0].site.name}` : '—'
+  }
+})
+
+/** 评分方案来源统计：指定 / 跟随当前 / 指定失效回退 */
+const schemeStats = computed(() => {
+  const rows = ranked.value
+  return {
+    assigned: rows.filter((r) => r.scheme.source === 'assigned').length,
+    following: rows.filter((r) => r.scheme.source === 'following').length,
+    fallback: rows.filter((r) => r.scheme.source === 'fallback').length
   }
 })
 
@@ -88,8 +106,8 @@ function openDetail(siteId: number | undefined): void {
       <div class="page-head__title">
         <h1>营位名次表</h1>
         <p>
-          按当前权重方案对全部候选营位加权求和后降序排列，实时给出 A/B/C 推荐等级；
-          命中风险否决项的营位整行标红并自动降为 C 级。
+          每个营位优先按自己指定的评分方案加权求和，未指定的才跟随当前启用方案，降序排列后给出 A/B/C
+          推荐等级；指定方案已删除时回退到当前方案并标记来源。命中风险否决项的营位整行标红并强制为 C 级。
         </p>
       </div>
       <div class="page-actions">
@@ -108,7 +126,7 @@ function openDetail(siteId: number | undefined): void {
       <div class="stat-card">
         <div class="stat-card__label">A 级推荐</div>
         <div class="stat-card__value">{{ stats.gradeA }}</div>
-        <div class="stat-card__extra">阈值来自当前方案</div>
+        <div class="stat-card__extra">阈值来自各营位方案</div>
       </div>
       <div class="stat-card">
         <div class="stat-card__label">命中否决</div>
@@ -128,7 +146,8 @@ function openDetail(siteId: number | undefined): void {
       <div class="panel__head">
         <h2>筛选条件</h2>
         <span class="weight-note">
-          当前方案：{{ activeProfileName }} · 归一方式：{{ activeNormalize }}
+          当前方案：{{ activeProfileName }} · 归一方式：{{ activeNormalize }} ·
+          指定 {{ schemeStats.assigned }} · 跟随 {{ schemeStats.following }} · 回退 {{ schemeStats.fallback }}
         </span>
       </div>
       <div class="filters">
@@ -197,6 +216,30 @@ function openDetail(siteId: number | undefined): void {
           <template #default="{ row }">
             <el-tag size="small" effect="plain">{{ row.site.surface }}</el-tag>
             <el-tag size="small" effect="plain" type="info" class="ml6">{{ row.site.access }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="评分方案" width="178">
+          <template #default="{ row }">
+            <div class="scheme-cell">
+              <el-tooltip
+                :content="
+                  row.scheme.source === 'fallback'
+                    ? `营位原指定方案已删除，当前回退跟随「${row.scheme.profileName}」`
+                    : row.scheme.profileName
+                "
+                placement="top"
+              >
+                <span class="scheme-cell__name">{{ row.scheme.profileName }}</span>
+              </el-tooltip>
+              <el-tag
+                size="small"
+                effect="plain"
+                :type="schemeSourceTag(row.scheme.source)"
+                data-testid="scheme-source-tag"
+              >
+                {{ schemeSourceLabel(row.scheme.source) }}
+              </el-tag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="坡度" width="92" align="right">
@@ -295,6 +338,20 @@ function openDetail(siteId: number | undefined): void {
 .cell-sub {
   font-size: 11px;
   color: var(--gb-muted);
+}
+.scheme-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.scheme-cell__name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--gb-ink);
 }
 .total-score {
   font-size: 15px;

@@ -15,8 +15,10 @@ import { ASPECT_TYPES, SURFACE_TYPES, ACCESS_MODES } from '@/types/campsite'
 import type { AspectType, Campsite, SurfaceType, AccessMode } from '@/types/campsite'
 import type { FactorAssessment, RockfallRisk, WindDir, WindForce } from '@/types/factor'
 import { ROCKFALL_RISKS, WIND_DIRS, WIND_FORCES } from '@/types/factor'
-import { FACTOR_META, DEFAULT_WEIGHTS } from '@/types/score'
-import type { FactorKey, FactorWeights } from '@/types/score'
+import { FACTOR_META } from '@/types/score'
+import type { FactorKey } from '@/types/score'
+import { resolveSiteScheme, SCHEME_SOURCE_LABEL } from '@/utils/scheme'
+import type { ResolvedScheme } from '@/utils/scheme'
 import {
   buildFactorRows,
   buildNormalizedMatrix,
@@ -45,6 +47,8 @@ interface SiteForm {
   tentCapacity: number
   flatness: number
   access: AccessMode
+  /** 评分方案：null = 跟随当前启用方案，否则为指定方案 id */
+  defaultProfileId: number | null
   note: string
 }
 
@@ -76,6 +80,7 @@ function defaultSiteForm(): SiteForm {
     tentCapacity: 4,
     flatness: 85,
     access: '车行',
+    defaultProfileId: null,
     note: ''
   }
 }
@@ -170,7 +175,7 @@ const previewSite = computed<Campsite>(() => ({
   tentCapacity: Number(site.tentCapacity),
   flatness: Number(site.flatness),
   access: site.access,
-  defaultProfileId: profileStore.activeProfile?.id ?? null,
+  defaultProfileId: site.defaultProfileId,
   note: site.note,
   createdAt: '',
   updatedAt: ''
@@ -193,24 +198,26 @@ const previewFactor = computed<FactorAssessment>(() => ({
   updatedAt: ''
 }))
 
-const previewWeights = computed<FactorWeights>(() => ({
-  ...DEFAULT_WEIGHTS,
-  ...(profileStore.activeProfile?.weights ?? {})
-}))
-const previewNormalize = computed(() => profileStore.activeProfile?.normalize ?? 'minmax')
+/** 候选营位解析出的评分方案：表单里指定了就用指定方案，否则跟随当前启用方案 */
+const previewScheme = computed<ResolvedScheme>(() =>
+  resolveSiteScheme(previewSite.value, profileStore.activeSchemeContext())
+)
 
 const previewRaw = computed(() => rawValuesOf(previewSite.value, previewFactor.value))
 
 /**
- * 极差归一必须同批比较：把「已在库营位 + 当前候选营位」放进同一批，
- * 否则单条样本跨度为零，候选营位会拿到虚高的满分。
+ * 极差归一必须同批比较：把「与候选营位同归一方式的已在库营位 + 当前候选营位」放进同一批，
+ * 否则单条样本跨度为零，候选营位会拿到虚高的满分；阈值分段逐营位独立，是否同批不影响结果。
  */
 const previewMatrix = computed(() => {
+  const method = previewScheme.value.normalize
+  const ctx = profileStore.activeSchemeContext()
   const entries = siteStore.list
     .filter((s): s is typeof s & { id: number } => typeof s.id === 'number')
+    .filter((s) => resolveSiteScheme(s, ctx).normalize === method)
     .map((s) => ({ siteId: s.id, values: rawValuesOf(s, siteStore.latestFactor(s.id)) }))
   entries.push({ siteId: 0, values: previewRaw.value })
-  return buildNormalizedMatrix(entries, previewNormalize.value)
+  return buildNormalizedMatrix(entries, method)
 })
 
 const previewNormalized = computed(
@@ -218,22 +225,18 @@ const previewNormalized = computed(
 )
 
 const previewRows = computed(() =>
-  buildFactorRows(previewNormalized.value, previewWeights.value).map((row) => ({
+  buildFactorRows(previewNormalized.value, previewScheme.value.weights).map((row) => ({
     ...row,
     raw: previewRaw.value[row.key]
   }))
 )
 
 const previewTotal = computed(() =>
-  weightedTotal(previewNormalized.value, previewWeights.value)
+  weightedTotal(previewNormalized.value, previewScheme.value.weights)
 )
 
 const previewGrade = computed<Grade>(() =>
-  gradeOf(
-    previewTotal.value,
-    profileStore.activeProfile?.thresholds ?? { gradeA: 78, gradeB: 58 },
-    false
-  )
+  gradeOf(previewTotal.value, previewScheme.value.thresholds, false)
 )
 
 const metaOf = (key: FactorKey) => FACTOR_META.find((m) => m.key === key)
@@ -265,7 +268,7 @@ async function submit(): Promise<void> {
       tentCapacity: Number(site.tentCapacity),
       flatness: Number(site.flatness),
       note: site.note.trim(),
-      defaultProfileId: profileStore.activeProfile?.id ?? null,
+      defaultProfileId: site.defaultProfileId,
       createdAt: '',
       updatedAt: ''
     })
@@ -431,6 +434,20 @@ async function submit(): Promise<void> {
           </el-radio-group>
         </el-form-item>
       </div>
+      <el-form-item label="评分方案">
+        <el-select id="site-profile" v-model="site.defaultProfileId" style="width: 100%">
+          <el-option :value="null" label="跟随当前启用方案（推荐）" />
+          <el-option
+            v-for="p in profileStore.list"
+            :key="p.id"
+            :value="p.id"
+            :label="`${p.name}（${p.season}）`"
+          />
+        </el-select>
+        <span class="weight-note">
+          指定后该营位始终按自己的方案评分，不随启用方案/临时比较变化；留空则跟随当前启用方案。
+        </span>
+      </el-form-item>
       <el-form-item label="营位备注">
         <el-input
           id="site-note"
@@ -549,7 +566,7 @@ async function submit(): Promise<void> {
       <div class="panel__head">
         <h2>实时评分预览</h2>
         <span class="weight-note">
-          按当前方案「{{ profileStore.activeProfile?.name ?? '—' }}」预估，保存后进入名次表
+          按方案「{{ previewScheme.profileName }}」预估（{{ SCHEME_SOURCE_LABEL[previewScheme.source] }}），保存后进入名次表
         </span>
       </div>
       <div class="preview-head">

@@ -12,8 +12,10 @@ import { useSiteStore } from '@/stores/siteStore'
 import { useProfileStore } from '@/stores/profileStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useRanking } from '@/hooks/useRanking'
-import { NORMALIZE_LABELS, SEASONS, weightSumGuard } from '@/types/score'
+import { NORMALIZE_LABELS, SEASONS } from '@/types/score'
 import type { FactorWeights, NormalizeMethod, GradeThresholds } from '@/types/score'
+import { resolveSiteScheme, SCHEME_SOURCE_LABEL, SCHEME_SOURCE_TAG } from '@/utils/scheme'
+import type { SchemeContext, SchemeSource } from '@/utils/scheme'
 import { formatScore } from '@/utils/format'
 import { weightSum } from '@/utils/score'
 
@@ -51,12 +53,25 @@ watch(
   () => snapshotActive()
 )
 
+/**
+ * 临时比较上下文：当前方案 = 评分页正在调整（未落库）的工作副本。
+ * 解析时只有「跟随 / 回退」的营位取这里的临时权重；自己指定方案的营位仍取库中方案，
+ * 因此拖权重、换归一方式都不会改写营位的指定关系。
+ */
+const workingSchemeContext = computed<SchemeContext>(() => ({
+  profiles: profileStore.list,
+  current: {
+    weights: uiStore.workingWeights,
+    normalize: uiStore.workingNormalize,
+    thresholds: { ...uiStore.workingThresholds },
+    name: `${profileStore.activeProfile?.name ?? '默认方案'}（临时比较）`
+  }
+}))
+
 const { ranked, best } = useRanking({
   sites: () => siteStore.list,
   factorOf: (id: number) => siteStore.latestFactor(id),
-  weights: () => uiStore.workingWeights,
-  normalize: () => uiStore.workingNormalize,
-  thresholds: () => uiStore.workingThresholds,
+  schemeOf: (site) => resolveSiteScheme(site, workingSchemeContext.value),
   vetoedIds: () => uiStore.vetoedSiteIds
 })
 
@@ -70,6 +85,22 @@ const gradeDistribution = computed(() => {
     C: rows.filter((r) => r.grade === 'C').length
   }
 })
+
+/** 临时调整可影响的营位数（跟随当前 + 指定失效回退）；指定方案的营位保持不变 */
+const followerCount = computed(
+  () => ranked.value.filter((r) => r.scheme.source !== 'assigned').length
+)
+const assignedCount = computed(
+  () => ranked.value.filter((r) => r.scheme.source === 'assigned').length
+)
+
+/** 表格插槽 row 类型为 any，经带类型的函数收窄后再索引来源字典 */
+function schemeSourceLabel(source: SchemeSource): string {
+  return SCHEME_SOURCE_LABEL[source]
+}
+function schemeSourceTag(source: SchemeSource): 'success' | 'info' | 'warning' {
+  return SCHEME_SOURCE_TAG[source]
+}
 
 /** 权重改变 → 标记为未保存，名次由 computed 自动重算 */
 function onWeightsChange(next: FactorWeights): void {
@@ -207,8 +238,8 @@ async function removeProfileRow(id: number | undefined): Promise<void> {
       <div class="page-head__title">
         <h1>权重与评分</h1>
         <p>
-          拖动下方各因子权重条，右侧名次会实时重排；调整归一方式与 A/B/C 阈值可改变整体松紧。
-          满意后可另存为季节方案，首页与详情页会立即采用启用中的方案。
+          拖动下方各因子权重条，右侧名次会实时重排；临时比较只影响未指定方案的营位，
+          自己指定了方案的营位仍按各自方案评分，调整不会改写指定关系。满意后可另存为季节方案。
         </p>
       </div>
       <div class="page-actions">
@@ -318,8 +349,11 @@ async function removeProfileRow(id: number | undefined): Promise<void> {
 
     <section class="panel">
       <div class="panel__head">
-        <h2>实时名次（跟随权重刷新）</h2>
-        <span class="weight-note">共 {{ ranked.length }} 个营位</span>
+        <h2>实时名次（临时比较只作用于跟随项）</h2>
+        <span class="weight-note">
+          共 {{ ranked.length }} 个营位 · 跟随/回退 {{ followerCount }} 个随权重刷新 ·
+          指定方案 {{ assignedCount }} 个不受影响
+        </span>
       </div>
       <el-table :data="ranked" size="small" border stripe>
         <el-table-column label="名次" width="72" align="center">
@@ -327,12 +361,22 @@ async function removeProfileRow(id: number | undefined): Promise<void> {
             <strong class="rank">{{ row.rank }}</strong>
           </template>
         </el-table-column>
-        <el-table-column label="营位" min-width="200">
+        <el-table-column label="营位" min-width="190">
           <template #default="{ row }">
             <el-link type="primary" underline="never" @click="router.push(`/sites/${row.siteId}`)">
               {{ row.site.code }} · {{ row.site.name }}
             </el-link>
             <div class="cell-sub">{{ row.site.campName }} · {{ row.site.surface }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="评分方案" min-width="170">
+          <template #default="{ row }">
+            <div class="scheme-cell">
+              <span class="scheme-cell__name">{{ row.scheme.profileName }}</span>
+              <el-tag size="small" effect="plain" :type="schemeSourceTag(row.scheme.source)">
+                {{ schemeSourceLabel(row.scheme.source) }}
+              </el-tag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="坡度" width="88" align="right">
@@ -373,7 +417,7 @@ async function removeProfileRow(id: number | undefined): Promise<void> {
     <section class="panel">
       <div class="panel__head">
         <h2>权重方案库</h2>
-        <span class="weight-note">启用中的方案会被首页、详情页与地图共同采用</span>
+        <span class="weight-note">启用中的方案会被未指定方案的营位跟随；指定方案的营位不受启用切换影响</span>
       </div>
       <el-table :data="profileStore.list" size="small" border>
         <el-table-column label="方案名" min-width="180">
@@ -476,6 +520,20 @@ async function removeProfileRow(id: number | undefined): Promise<void> {
 .cell-sub {
   font-size: 11px;
   color: var(--gb-muted);
+}
+.scheme-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.scheme-cell__name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--gb-ink);
 }
 .ml6 {
   margin-left: 6px;
