@@ -12,7 +12,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import { useSiteStore } from '@/stores/siteStore'
 import { useProfileStore } from '@/stores/profileStore'
 import { useUiStore } from '@/stores/uiStore'
-import { useRanking } from '@/hooks/useRanking'
+import { useRanking, PROFILE_SOURCE_LABELS } from '@/hooks/useRanking'
 import type { Grade } from '@/utils/score'
 import { useAmapLoader } from '@/hooks/useAmapLoader'
 import { SURFACE_TYPES } from '@/types/campsite'
@@ -43,9 +43,8 @@ const visibleSites = computed(() =>
 const { ranked, scoreOf } = useRanking({
   sites: () => siteStore.list,
   factorOf: (id: number) => siteStore.latestFactor(id),
-  weights: () => profileStore.activeWeights,
-  normalize: () => profileStore.activeProfile?.normalize ?? 'minmax',
-  thresholds: () => profileStore.activeProfile?.thresholds ?? { gradeA: 78, gradeB: 58 },
+  profiles: () => profileStore.list,
+  current: () => profileStore.activeScheme,
   vetoedIds: () => uiStore.vetoedSiteIds
 })
 
@@ -243,6 +242,15 @@ const gradeStats = computed(() => {
         <div class="detail-item">
           <span class="detail-item__label">最近营位</span>
           <span>{{ nearest ? `${nearest.code} · ${formatDistance(nearest.meters)}` : '唯一营位' }}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-item__label">评分方案</span>
+          <span>
+            {{ selectedRow?.profileName ?? '—' }}
+            <template v-if="selectedRow">
+              （{{ PROFILE_SOURCE_LABELS[selectedRow.profileSource] }}）
+            </template>
+          </span>
         </div>
         <div class="detail-item">
           <span class="detail-item__label">最近评估</span>

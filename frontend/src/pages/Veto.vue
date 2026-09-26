@@ -23,9 +23,8 @@ const uiStore = useUiStore()
 const { scoreOf } = useRanking({
   sites: () => siteStore.list,
   factorOf: (id: number) => siteStore.latestFactor(id),
-  weights: () => profileStore.activeWeights,
-  normalize: () => profileStore.activeProfile?.normalize ?? 'minmax',
-  thresholds: () => profileStore.activeProfile?.thresholds ?? { gradeA: 78, gradeB: 58 },
+  profiles: () => profileStore.list,
+  current: () => profileStore.activeScheme,
   vetoedIds: () => uiStore.vetoedSiteIds
 })
 

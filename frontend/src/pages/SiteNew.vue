@@ -45,6 +45,8 @@ interface SiteForm {
   tentCapacity: number
   flatness: number
   access: AccessMode
+  /** 指定的评分方案 id；null = 跟随当前方案 */
+  defaultProfileId: number | null
   note: string
 }
 
@@ -76,6 +78,7 @@ function defaultSiteForm(): SiteForm {
     tentCapacity: 4,
     flatness: 85,
     access: '车行',
+    defaultProfileId: null,
     note: ''
   }
 }
@@ -170,7 +173,7 @@ const previewSite = computed<Campsite>(() => ({
   tentCapacity: Number(site.tentCapacity),
   flatness: Number(site.flatness),
   access: site.access,
-  defaultProfileId: profileStore.activeProfile?.id ?? null,
+  defaultProfileId: site.defaultProfileId,
   note: site.note,
   createdAt: '',
   updatedAt: ''
@@ -193,11 +196,23 @@ const previewFactor = computed<FactorAssessment>(() => ({
   updatedAt: ''
 }))
 
+/**
+ * 预览采用的方案：营位指定了评分方案就按指定方案，否则跟随当前启用方案，
+ * 与名次表 useRanking 的解析规则保持一致。
+ */
+const previewProfile = computed(
+  () => profileStore.byId(site.defaultProfileId) ?? profileStore.activeProfile
+)
+const previewSchemeLabel = computed(() =>
+  site.defaultProfileId == null
+    ? `${previewProfile.value?.name ?? '—'}（跟随当前）`
+    : `${previewProfile.value?.name ?? '—'}（已指定）`
+)
 const previewWeights = computed<FactorWeights>(() => ({
   ...DEFAULT_WEIGHTS,
-  ...(profileStore.activeProfile?.weights ?? {})
+  ...(previewProfile.value?.weights ?? {})
 }))
-const previewNormalize = computed(() => profileStore.activeProfile?.normalize ?? 'minmax')
+const previewNormalize = computed(() => previewProfile.value?.normalize ?? 'minmax')
 
 const previewRaw = computed(() => rawValuesOf(previewSite.value, previewFactor.value))
 
@@ -231,7 +246,7 @@ const previewTotal = computed(() =>
 const previewGrade = computed<Grade>(() =>
   gradeOf(
     previewTotal.value,
-    profileStore.activeProfile?.thresholds ?? { gradeA: 78, gradeB: 58 },
+    previewProfile.value?.thresholds ?? { gradeA: 78, gradeB: 58 },
     false
   )
 )
@@ -265,7 +280,7 @@ async function submit(): Promise<void> {
       tentCapacity: Number(site.tentCapacity),
       flatness: Number(site.flatness),
       note: site.note.trim(),
-      defaultProfileId: profileStore.activeProfile?.id ?? null,
+      defaultProfileId: site.defaultProfileId,
       createdAt: '',
       updatedAt: ''
     })
@@ -430,6 +445,22 @@ async function submit(): Promise<void> {
             <el-radio v-for="a in ACCESS_MODES" :key="a" :value="a">{{ a }}</el-radio>
           </el-radio-group>
         </el-form-item>
+        <el-form-item label="评分方案">
+          <el-select
+            id="site-profile"
+            v-model="site.defaultProfileId"
+            placeholder="跟随当前方案"
+            style="width: 100%"
+          >
+            <el-option :value="null" label="跟随当前方案（未指定）" />
+            <el-option
+              v-for="p in profileStore.list"
+              :key="p.id"
+              :value="p.id"
+              :label="`${p.name}（${p.season}）`"
+            />
+          </el-select>
+        </el-form-item>
       </div>
       <el-form-item label="营位备注">
         <el-input
@@ -549,7 +580,7 @@ async function submit(): Promise<void> {
       <div class="panel__head">
         <h2>实时评分预览</h2>
         <span class="weight-note">
-          按当前方案「{{ profileStore.activeProfile?.name ?? '—' }}」预估，保存后进入名次表
+          按方案「{{ previewSchemeLabel }}」预估，保存后进入名次表；未指定时跟随当前启用方案
         </span>
       </div>
       <div class="preview-head">

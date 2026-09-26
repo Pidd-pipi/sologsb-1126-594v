@@ -20,6 +20,20 @@ export type FactorKey =
 /** 归一化方式 */
 export type NormalizeMethod = 'minmax' | 'threshold'
 
+/**
+ * 一套「当前评分上下文」：名次表/详情/地图页为启用方案，评分页为未保存的临时比较方案。
+ * 只作用于未指定方案的营位（跟随项），不会改写营位已有的指定关系。
+ */
+export interface CurrentScheme {
+  weights: FactorWeights
+  normalize: NormalizeMethod
+  thresholds: GradeThresholds
+  /** 来源方案 id；临时比较方案沿用其基底方案的 id，仅用于展示 */
+  profileId: number | null
+  /** 展示用方案名 */
+  profileName: string
+}
+
 /** 因子权重表：每项 0-100 */
 export type FactorWeights = Record<FactorKey, number>
 

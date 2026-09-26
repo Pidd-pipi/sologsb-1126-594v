@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { db, toPlain } from '@/utils/db'
-import type { FactorWeights, ScoreProfile } from '@/types/score'
+import type { CurrentScheme, FactorWeights, ScoreProfile } from '@/types/score'
 import { DEFAULT_WEIGHTS } from '@/types/score'
 import { nowIso } from '@/utils/format'
 
@@ -19,6 +19,21 @@ export const useProfileStore = defineStore('profile', () => {
     ...DEFAULT_WEIGHTS,
     ...(activeProfile.value?.weights ?? {})
   }))
+
+  /**
+   * 当前启用方案包装成的评分上下文：未指定方案的营位在名次表/详情/地图页跟随它。
+   * 评分页的临时比较方案不经过这里，由 uiStore 的工作权重另行组装。
+   */
+  const activeScheme = computed<CurrentScheme>(() => {
+    const p = activeProfile.value
+    return {
+      weights: { ...DEFAULT_WEIGHTS, ...(p?.weights ?? {}) },
+      normalize: p?.normalize ?? 'minmax',
+      thresholds: p ? { ...p.thresholds } : { gradeA: 78, gradeB: 58 },
+      profileId: typeof p?.id === 'number' ? p.id : null,
+      profileName: p?.name ?? '默认方案'
+    }
+  })
 
   async function load(): Promise<void> {
     loading.value = true
@@ -98,6 +113,7 @@ export const useProfileStore = defineStore('profile', () => {
     total,
     activeProfile,
     activeWeights,
+    activeScheme,
     load,
     createProfile,
     updateProfile,

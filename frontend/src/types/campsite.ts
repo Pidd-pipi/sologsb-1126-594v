@@ -48,7 +48,11 @@ export interface Campsite {
   flatness: number
   /** 进出方式 */
   access: AccessMode
-  /** 该营位默认采用的权重方案 id（v3 迁移时回填） */
+  /**
+   * 该营位指定采用的权重方案 id；为 null 表示未指定，评分时跟随当前方案
+   * （名次表/详情/地图为启用方案，评分页为临时比较方案）。
+   * 指定的方案被删除后，评分时自动回退到当前方案，并在名次表标出来源。
+   */
   defaultProfileId: number | null
   /** 备注 */
   note: string

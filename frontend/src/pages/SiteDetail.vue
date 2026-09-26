@@ -13,7 +13,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import { useSiteStore } from '@/stores/siteStore'
 import { useProfileStore } from '@/stores/profileStore'
 import { useUiStore } from '@/stores/uiStore'
-import { useRanking } from '@/hooks/useRanking'
+import { useRanking, PROFILE_SOURCE_LABELS, profileSourceTagType } from '@/hooks/useRanking'
 import { FACTOR_META, NORMALIZE_LABELS } from '@/types/score'
 import { ASPECT_TYPES, SURFACE_TYPES, ACCESS_MODES } from '@/types/campsite'
 import type { AspectType, AccessMode, SurfaceType } from '@/types/campsite'
@@ -37,9 +37,8 @@ const site = computed(() => siteStore.byId(siteId.value))
 const { scoreOf } = useRanking({
   sites: () => siteStore.list,
   factorOf: (id: number) => siteStore.latestFactor(id),
-  weights: () => profileStore.activeWeights,
-  normalize: () => profileStore.activeProfile?.normalize ?? 'minmax',
-  thresholds: () => profileStore.activeProfile?.thresholds ?? { gradeA: 78, gradeB: 58 },
+  profiles: () => profileStore.list,
+  current: () => profileStore.activeScheme,
   vetoedIds: () => uiStore.vetoedSiteIds
 })
 
@@ -174,6 +173,8 @@ const editForm = reactive({
   tentCapacity: 1,
   flatness: 80,
   access: '车行' as AccessMode,
+  /** 指定的评分方案 id；null = 跟随当前方案 */
+  defaultProfileId: null as number | null,
   note: ''
 })
 
@@ -189,6 +190,7 @@ function startEdit(): void {
   editForm.tentCapacity = s.tentCapacity
   editForm.flatness = s.flatness
   editForm.access = s.access
+  editForm.defaultProfileId = s.defaultProfileId
   editForm.note = s.note
   editing.value = true
 }
@@ -205,6 +207,7 @@ async function saveEdit(): Promise<void> {
     tentCapacity: Number(editForm.tentCapacity),
     flatness: Number(editForm.flatness),
     access: editForm.access,
+    defaultProfileId: editForm.defaultProfileId,
     note: editForm.note.trim()
   })
   editing.value = false
@@ -259,6 +262,15 @@ watch(
       :description="vetoList.map((v) => `${v.type}：${v.description}`).join(' ｜ ')"
     />
 
+    <el-alert
+      v-if="scoreRow?.profileSource === 'fallback'"
+      type="warning"
+      show-icon
+      :closable="false"
+      title="指定的评分方案已被删除，本营位已回退到当前启用方案"
+      description="可在「编辑基础信息」中重新指定评分方案，或保持跟随当前方案。"
+    />
+
     <MapPanel
       :sites="siteStore.list"
       :selected-id="siteId"
@@ -272,7 +284,17 @@ watch(
       <div class="stat-card">
         <div class="stat-card__label">综合得分</div>
         <div class="stat-card__value">{{ scoreRow?.total ?? '—' }}</div>
-        <div class="stat-card__extra">方案 {{ profileStore.activeProfile?.name ?? '—' }}</div>
+        <div class="stat-card__extra scheme-extra">
+          <span>方案 {{ scoreRow?.profileName ?? '—' }}</span>
+          <el-tag
+            v-if="scoreRow"
+            size="small"
+            effect="plain"
+            :type="profileSourceTagType(scoreRow.profileSource)"
+          >
+            {{ PROFILE_SOURCE_LABELS[scoreRow.profileSource] }}
+          </el-tag>
+        </div>
       </div>
       <div class="stat-card">
         <div class="stat-card__label">推荐等级</div>
@@ -362,6 +384,22 @@ watch(
               <el-radio v-for="a in ACCESS_MODES" :key="a" :value="a">{{ a }}</el-radio>
             </el-radio-group>
           </el-form-item>
+          <el-form-item label="评分方案">
+            <el-select
+              id="edit-profile"
+              v-model="editForm.defaultProfileId"
+              placeholder="跟随当前方案"
+              style="width: 100%"
+            >
+              <el-option :value="null" label="跟随当前方案（未指定）" />
+              <el-option
+                v-for="p in profileStore.list"
+                :key="p.id"
+                :value="p.id"
+                :label="`${p.name}（${p.season}）`"
+              />
+            </el-select>
+          </el-form-item>
         </div>
         <el-form-item label="备注">
           <el-input v-model="editForm.note" type="textarea" :rows="2" />
@@ -377,9 +415,11 @@ watch(
       <div class="panel__head">
         <h2>因子打分表</h2>
         <span class="weight-note">
-          归一方式：{{ profileStore.activeProfile ? NORMALIZE_LABELS[profileStore.activeProfile.normalize] : '—' }}
-          · 等级阈值 A ≥ {{ profileStore.activeProfile?.thresholds.gradeA ?? 78 }} / B ≥
-          {{ profileStore.activeProfile?.thresholds.gradeB ?? 58 }}
+          方案「{{ scoreRow?.profileName ?? '—' }}」 · 归一方式：{{
+            scoreRow ? NORMALIZE_LABELS[scoreRow.normalize] : '—'
+          }}
+          · 等级阈值 A ≥ {{ scoreRow?.thresholds.gradeA ?? 78 }} / B ≥
+          {{ scoreRow?.thresholds.gradeB ?? 58 }}
         </span>
       </div>
       <div class="factor-grid">
@@ -643,6 +683,13 @@ watch(
 }
 .coord {
   font-size: 15px;
+}
+.scheme-extra {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 .review-form {
   margin-bottom: 12px;

@@ -11,9 +11,9 @@ import GradeBadge from '@/components/common/GradeBadge.vue'
 import { useSiteStore } from '@/stores/siteStore'
 import { useProfileStore } from '@/stores/profileStore'
 import { useUiStore } from '@/stores/uiStore'
-import { useRanking } from '@/hooks/useRanking'
+import { useRanking, profileSourceLabel, profileSourceTagType } from '@/hooks/useRanking'
 import { NORMALIZE_LABELS, SEASONS, weightSumGuard } from '@/types/score'
-import type { FactorWeights, NormalizeMethod, GradeThresholds } from '@/types/score'
+import type { CurrentScheme, FactorWeights, NormalizeMethod, GradeThresholds } from '@/types/score'
 import { formatScore } from '@/utils/format'
 import { weightSum } from '@/utils/score'
 
@@ -51,12 +51,26 @@ watch(
   () => snapshotActive()
 )
 
+/**
+ * 评分页的「当前方案」是未保存的临时比较方案：
+ * 只作用于未指定方案的跟随项（以及指定方案已删除的回退项），
+ * 已指定方案的营位仍按各自方案评分，拖动权重不会改写任何指定关系。
+ */
+const workingScheme = computed<CurrentScheme>(() => ({
+  weights: { ...uiStore.workingWeights },
+  normalize: uiStore.workingNormalize,
+  thresholds: { ...uiStore.workingThresholds },
+  profileId: profileStore.activeProfile?.id ?? null,
+  profileName: uiStore.dirty
+    ? `临时比较 · ${profileStore.activeProfile?.name ?? '默认方案'}`
+    : (profileStore.activeProfile?.name ?? '默认方案')
+}))
+
 const { ranked, best } = useRanking({
   sites: () => siteStore.list,
   factorOf: (id: number) => siteStore.latestFactor(id),
-  weights: () => uiStore.workingWeights,
-  normalize: () => uiStore.workingNormalize,
-  thresholds: () => uiStore.workingThresholds,
+  profiles: () => profileStore.list,
+  current: () => workingScheme.value,
   vetoedIds: () => uiStore.vetoedSiteIds
 })
 
@@ -208,7 +222,8 @@ async function removeProfileRow(id: number | undefined): Promise<void> {
         <h1>权重与评分</h1>
         <p>
           拖动下方各因子权重条，右侧名次会实时重排；调整归一方式与 A/B/C 阈值可改变整体松紧。
-          满意后可另存为季节方案，首页与详情页会立即采用启用中的方案。
+          这里的调整属于临时比较方案，只作用于「跟随当前」的营位：已指定方案的营位仍按各自方案评分，
+          也不会被改写指定关系。满意后可另存为季节方案，再到营位详情里把它指定给具体营位。
         </p>
       </div>
       <div class="page-actions">
@@ -319,7 +334,9 @@ async function removeProfileRow(id: number | undefined): Promise<void> {
     <section class="panel">
       <div class="panel__head">
         <h2>实时名次（跟随权重刷新）</h2>
-        <span class="weight-note">共 {{ ranked.length }} 个营位</span>
+        <span class="weight-note">
+          共 {{ ranked.length }} 个营位 · 临时比较只作用于跟随项，指定方案的营位不受影响
+        </span>
       </div>
       <el-table :data="ranked" size="small" border stripe>
         <el-table-column label="名次" width="72" align="center">
@@ -333,6 +350,20 @@ async function removeProfileRow(id: number | undefined): Promise<void> {
               {{ row.site.code }} · {{ row.site.name }}
             </el-link>
             <div class="cell-sub">{{ row.site.campName }} · {{ row.site.surface }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="评分方案" min-width="160">
+          <template #default="{ row }">
+            <div class="scheme-cell">
+              <span>{{ row.profileName }}</span>
+              <el-tag
+                size="small"
+                effect="plain"
+                :type="profileSourceTagType(row.profileSource)"
+              >
+                {{ profileSourceLabel(row.profileSource) }}
+              </el-tag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="坡度" width="88" align="right">
@@ -373,7 +404,7 @@ async function removeProfileRow(id: number | undefined): Promise<void> {
     <section class="panel">
       <div class="panel__head">
         <h2>权重方案库</h2>
-        <span class="weight-note">启用中的方案会被首页、详情页与地图共同采用</span>
+        <span class="weight-note">启用中的方案是未指定营位的跟随目标，被首页、详情页与地图共同采用</span>
       </div>
       <el-table :data="profileStore.list" size="small" border>
         <el-table-column label="方案名" min-width="180">
@@ -476,6 +507,14 @@ async function removeProfileRow(id: number | undefined): Promise<void> {
 .cell-sub {
   font-size: 11px;
   color: var(--gb-muted);
+}
+.scheme-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  font-size: 12px;
+  line-height: 1.3;
 }
 .ml6 {
   margin-left: 6px;

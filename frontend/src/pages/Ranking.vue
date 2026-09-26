@@ -9,7 +9,7 @@ import { useRouter } from 'vue-router'
 import { useSiteStore } from '@/stores/siteStore'
 import { useProfileStore } from '@/stores/profileStore'
 import { useUiStore } from '@/stores/uiStore'
-import { useRanking } from '@/hooks/useRanking'
+import { useRanking, profileSourceLabel, profileSourceTagType } from '@/hooks/useRanking'
 import { FACTOR_META } from '@/types/score'
 import { SURFACE_TYPES, ACCESS_MODES } from '@/types/campsite'
 import GradeBadge from '@/components/common/GradeBadge.vue'
@@ -39,9 +39,8 @@ const inputSites = computed(() =>
 const { ranked } = useRanking({
   sites: () => inputSites.value,
   factorOf: (siteId: number) => siteStore.latestFactor(siteId),
-  weights: () => profileStore.activeWeights,
-  normalize: () => profileStore.activeProfile?.normalize ?? 'minmax',
-  thresholds: () => profileStore.activeProfile?.thresholds ?? { gradeA: 78, gradeB: 58 },
+  profiles: () => profileStore.list,
+  current: () => profileStore.activeScheme,
   vetoedIds: () => uiStore.vetoedSiteIds
 })
 
@@ -88,7 +87,8 @@ function openDetail(siteId: number | undefined): void {
       <div class="page-head__title">
         <h1>营位名次表</h1>
         <p>
-          按当前权重方案对全部候选营位加权求和后降序排列，实时给出 A/B/C 推荐等级；
+          每个营位优先按自己指定的评分方案加权，未指定的跟随当前启用方案；
+          指定方案被删除的营位自动回退到当前方案，并在「评分方案」列标出来源。
           命中风险否决项的营位整行标红并自动降为 C 级。
         </p>
       </div>
@@ -128,7 +128,7 @@ function openDetail(siteId: number | undefined): void {
       <div class="panel__head">
         <h2>筛选条件</h2>
         <span class="weight-note">
-          当前方案：{{ activeProfileName }} · 归一方式：{{ activeNormalize }}
+          当前方案：{{ activeProfileName }} · 归一方式：{{ activeNormalize }}（仅跟随项适用）
         </span>
       </div>
       <div class="filters">
@@ -190,6 +190,20 @@ function openDetail(siteId: number | undefined): void {
               <span class="site-cell__sub">
                 {{ row.site.campName }} · 海拔 {{ row.site.elevation }} m · 容 {{ row.site.tentCapacity }} 帐
               </span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="评分方案" min-width="172">
+          <template #default="{ row }">
+            <div class="scheme-cell">
+              <span class="scheme-cell__name">{{ row.profileName }}</span>
+              <el-tag
+                size="small"
+                effect="plain"
+                :type="profileSourceTagType(row.profileSource)"
+              >
+                {{ profileSourceLabel(row.profileSource) }}
+              </el-tag>
             </div>
           </template>
         </el-table-column>
@@ -291,6 +305,17 @@ function openDetail(siteId: number | undefined): void {
 .site-cell__sub {
   font-size: 11px;
   color: var(--gb-muted);
+}
+.scheme-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.scheme-cell__name {
+  font-size: 12px;
+  color: var(--gb-ink);
+  line-height: 1.3;
 }
 .cell-sub {
   font-size: 11px;

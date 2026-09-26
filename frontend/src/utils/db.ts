@@ -131,13 +131,38 @@ function seedProfiles(): ScoreProfile[] {
       note: '雨季强调风力遮蔽与水系距离，阈值分段避免极差归一被单个离群营位拉偏。',
       createdAt: SEED_TS,
       updatedAt: SEED_TS
+    },
+    {
+      id: 3,
+      name: '春季林地舒适方案',
+      weights: {
+        slope: 10,
+        flatness: 10,
+        aspect: 8,
+        waterDistance: 12,
+        wind: 8,
+        signal: 8,
+        sun: 12,
+        rockfall: 14,
+        shade: 12,
+        distanceToCar: 4,
+        distanceToTrail: 2
+      },
+      normalize: 'minmax',
+      thresholds: { gradeA: 76, gradeB: 56 },
+      season: '春季',
+      active: false,
+      note: '面向春季林下营位：兼顾日照与植被遮蔽，提高落石落枝（枯枝坠落）权重，弱化通行距离。',
+      createdAt: SEED_TS,
+      updatedAt: SEED_TS
     }
   ]
 }
 
 function seedSites(): Campsite[] {
   const base = {
-    defaultProfileId: 1,
+    // 未指定评分方案的营位跟随当前启用方案；指定方案的营位（如下方两处林地）优先用自己的方案
+    defaultProfileId: null as number | null,
     createdAt: SEED_TS,
     updatedAt: SEED_TS
   }
@@ -174,7 +199,8 @@ function seedSites(): Campsite[] {
       tentCapacity: 4,
       flatness: 74,
       access: '步行',
-      note: '马尾松林下缓坡，夏季阴凉，但落枝需定期清理。'
+      note: '马尾松林下缓坡，夏季阴凉，但落枝需定期清理。',
+      defaultProfileId: 3
     },
     {
       ...base,
@@ -226,7 +252,7 @@ function seedSites(): Campsite[] {
       flatness: 80,
       access: '步行',
       note: '杉木林间平整台地，遮蔽度高，日照偏短。',
-      defaultProfileId: 2
+      defaultProfileId: 3
     },
     {
       ...base,
